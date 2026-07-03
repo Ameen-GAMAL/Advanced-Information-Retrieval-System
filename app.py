@@ -82,6 +82,29 @@ st.caption(
     "combined by a MAP-tuned weighted fusion."
 )
 
+with st.expander("ℹ️ What is this?", expanded=True):
+    st.markdown(
+        """
+This is a **multi-stage search engine**. When you enter a query it:
+
+1. **Retrieves** an initial pool of candidate documents with **BM25**
+   (a classic keyword-ranking algorithm) — this is the *baseline*.
+2. **Reranks** that pool with neural models that understand meaning, not
+   just keywords — a **BERT** cross-encoder, **ELMo** embeddings, and a
+   **Gensim** Word2Vec model.
+3. **Fuses** their scores with weights tuned to maximise ranking quality
+   (**Mean Average Precision**), giving a **~15% improvement over BM25**.
+
+Use the sidebar to turn rerankers on/off and adjust the fusion weights,
+then watch how the ranking changes.
+
+**Search corpus:** the [Vaswani](https://ir-datasets.com/vaswani.html)
+collection — ~11,400 abstracts of scientific papers on **aerodynamics
+and aeronautics**. Queries about that domain work best, e.g.
+*"compressible flow past a body"* or *"boundary layer transition"*.
+"""
+    )
+
 with st.sidebar:
     st.header("Rerankers")
     use_bert = st.checkbox("BERT cross-encoder", value=True)
@@ -109,9 +132,22 @@ if metrics:
         st.metric("MAP improvement over BM25", f"{metrics['map_improvement']:+.1%}")
 else:
     st.info(
-        "No `artifacts/results.json` found yet — run `scripts/tune_weights.py` "
-        "then `scripts/evaluate.py` to populate offline metrics.",
+        "**Offline metrics not generated yet.** The live search below works "
+        "with default fusion weights. To reproduce the full experiment — build "
+        "the index, tune the fusion weights to maximise MAP, and measure the "
+        "improvement over BM25 — run the pipeline once:",
         icon="ℹ️",
+    )
+    st.code(
+        "python scripts/build_index.py    # build the Terrier index\n"
+        "python scripts/tune_weights.py   # tune fusion weights on held-out queries\n"
+        "python scripts/evaluate.py       # evaluate tuned fusion vs BM25 baseline",
+        language="bash",
+    )
+    st.caption(
+        "This produces `artifacts/fusion_weights.json` (used as the default "
+        "slider values) and `artifacts/results.json` (the metrics table shown "
+        "here). Requires the full dependencies in `requirements.txt` and Java 11+."
     )
 
 query = st.text_input("Search query", placeholder="e.g. compressible flow past a body")
