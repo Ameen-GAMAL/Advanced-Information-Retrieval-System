@@ -1,0 +1,31 @@
+# Experiment configuration for the Advanced Information Retrieval System.
+
+# ir_datasets identifier. Vaswani: 11,429 abstracts, 93 queries, binary qrels.
+dataset: "irds:vaswani"
+
+index_dir: "data/index"
+artifacts_dir: "artifacts"
+
+retrieval:
+  bm25:
+    k1: 1.2
+    b: 0.75
+    num_results: 100   # size of the candidate pool the rerankers rescore
+
+models:
+  bert: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  elmo: "https://tfhub.dev/google/elmo/3"
+  word2vec:
+    vector_size: 300
+    window: 5
+    min_count: 2
+    epochs: 20
+    seed: 42
+
+evaluation:
+  validation_fraction: 0.5   # half the queries tune weights, half evaluate
+  seed: 42
+
+optimization:
+  grid_resolution: 6         # lattice granularity for the coarse simplex search
+  max_iter: 200              # Nelder-Mead refinement iterations

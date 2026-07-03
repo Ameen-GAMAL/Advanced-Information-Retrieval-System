@@ -1,0 +1,30 @@
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Project data & generated artifacts
+data/index/
+data/cache/
+artifacts/*.json
+!artifacts/.gitkeep
+
+# Terrier / ir_datasets download caches
+.terrier/
+*.terrier
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
