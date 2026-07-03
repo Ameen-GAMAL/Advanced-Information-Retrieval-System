@@ -1,0 +1,12 @@
+.git
+.gitignore
+data/index
+data/cache
+artifacts/*.json
+tests
+.venv
+venv
+__pycache__
+*.pyc
+.idea
+.vscode

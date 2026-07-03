@@ -132,6 +132,34 @@ fusion (tuned)   0.xxxx    0.xxxx    0.xxxx
 MAP improvement of tuned fusion over BM25 baseline: +~15%
 ```
 
+## Interactive demo (Streamlit)
+
+`app.py` provides a search box over the same BM25 → BERT/ELMo/Gensim →
+fusion pipeline: toggle rerankers, adjust fusion weights, and see the
+resulting ranking (plus each component's individual ranking) live.
+
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+Requires Java 11+ (Terrier). The BM25 index and neural models are built
+once and cached for the session (`st.cache_resource`).
+
+### Deploy (Docker / Hugging Face Spaces)
+
+PyTerrier needs a JVM, so this ships as a **Docker** Space rather than
+the lightweight Streamlit SDK:
+
+```bash
+docker build -t ir-system .
+docker run -p 7860:7860 ir-system
+```
+
+To deploy on Hugging Face Spaces: create a new Space with **Docker** as
+the SDK, push this repo to it (the `Dockerfile` at the root is picked up
+automatically), and it will serve on port 7860.
+
 ## Configuration
 
 All knobs live in [`config/config.yaml`](config/config.yaml): dataset id,

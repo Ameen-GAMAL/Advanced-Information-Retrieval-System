@@ -4,6 +4,9 @@ pandas>=2.0
 scipy>=1.10
 pyyaml>=6.0
 
+# Interactive demo (app.py)
+streamlit>=1.28
+
 # First-stage retrieval
 python-terrier>=0.10.0
 ir_datasets>=0.5.5
