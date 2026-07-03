@@ -15,10 +15,15 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+
+# The package uses a src/ layout; `streamlit run app.py` doesn't inherit the
+# PYTHONPATH=src used by the CLI scripts, so put src/ on the path explicitly.
+sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from ir_system.fusion import fuse
 from ir_system.pipeline import RetrievalPipeline, load_config
