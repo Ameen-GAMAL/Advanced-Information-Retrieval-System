@@ -21,7 +21,11 @@ def build_index(dataset, index_dir: str | Path, overwrite: bool = False):
     retrieval transformers.
     """
     pt = init_pyterrier()
-    index_dir = Path(index_dir)
+    # Terrier resolves *relative* index paths against its internal ".var"
+    # directory, which won't match the folder we create here and fails with
+    # "path ... does not exist, or cannot be written to". Always hand Terrier
+    # an absolute path so both sides agree on the location.
+    index_dir = Path(index_dir).resolve()
     properties_file = index_dir / "data.properties"
 
     if properties_file.exists() and not overwrite:
