@@ -44,6 +44,7 @@ class ElmoRanker:
         self._elmo = hub.load(hub_url)
         self._signature = self._elmo.signatures["default"]
         self.batch_size = batch_size
+        self._document_vectors: dict[tuple[str, str], np.ndarray] = {}
         self.cache_dir = Path(cache_dir) if cache_dir else None
         if self.cache_dir:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -51,31 +52,41 @@ class ElmoRanker:
     def encode(self, texts: Sequence[str]) -> np.ndarray:
         """Embed ``texts`` into (n, 1024) mean-pooled ELMo vectors."""
         tf = self._tf
+        # Similar lengths per batch avoid padding every abstract to the longest one.
+        order = sorted(range(len(texts)), key=lambda index: len(texts[index].split()))
         chunks = []
-        for start in range(0, len(texts), self.batch_size):
-            batch = [t if t.strip() else "empty" for t in texts[start : start + self.batch_size]]
+        for batch_number, start in enumerate(range(0, len(order), self.batch_size), start=1):
+            batch = [texts[index] if texts[index].strip() else "empty" for index in order[start : start + self.batch_size]]
             outputs = self._signature(tf.constant(batch))
             # 'default' is the mean over the sequence of the weighted sum
             # of the BiLM layers — a fixed sentence representation.
             chunks.append(outputs["default"].numpy())
-        return np.vstack(chunks)
+            if batch_number % 25 == 0 and len(order) > self.batch_size:
+                logger.info("encoded %d/%d ELMo inputs", min(start + self.batch_size, len(order)), len(order))
+        return np.vstack(chunks)[np.argsort(order)] if chunks else np.empty((0, 1024), dtype=np.float32)
 
     def _encode_documents(self, docnos: Sequence[str], corpus: Dict[str, str]) -> np.ndarray:
         """Encode documents, memoised on disk keyed by the docno set."""
-        if self.cache_dir is None:
-            return self.encode([corpus[d] for d in docnos])
+        if not docnos:
+            return np.empty((0, 1024), dtype=np.float32)
+        keys = [(docno, corpus[docno]) for docno in docnos]
         digest = hashlib.sha256(self._model_id.encode("utf-8"))
-        for docno in sorted(docnos):
-            text = corpus[docno] or ""
+        for docno, text in sorted(keys):
             digest.update(f"{len(docno)}:{docno}{len(text)}:{text}".encode("utf-8"))
         key = digest.hexdigest()[:24]
-        cache_file = self.cache_dir / f"docs_{key}.npz"
-        if cache_file.exists():
+        cache_file = self.cache_dir / f"docs_{key}.npz" if self.cache_dir else None
+        if cache_file is not None and cache_file.exists():
             with np.load(cache_file, allow_pickle=False) as cached:
                 stored = {d: i for i, d in enumerate(cached["docnos"].tolist())}
-                return cached["embeddings"][[stored[d] for d in docnos]]
-        embeddings = self.encode([corpus[d] for d in docnos])
-        np.savez_compressed(cache_file, docnos=np.array(list(docnos)), embeddings=embeddings)
+                embeddings = cached["embeddings"][[stored[d] for d in docnos]]
+            self._document_vectors.update(zip(keys, embeddings))
+            return embeddings
+        missing = [doc for doc in keys if doc not in self._document_vectors]
+        if missing:
+            self._document_vectors.update(zip(missing, self.encode([text for _, text in missing])))
+        embeddings = np.stack([self._document_vectors[doc] for doc in keys])
+        if cache_file is not None:
+            np.savez_compressed(cache_file, docnos=np.array(list(docnos)), embeddings=embeddings)
         return embeddings
 
     def score(

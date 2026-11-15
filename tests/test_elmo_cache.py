@@ -1,0 +1,35 @@
+from types import SimpleNamespace
+
+import numpy as np
+
+from ir_system.rankers.elmo_ranker import ElmoRanker
+
+
+def test_elmo_batches_by_length_and_reuses_only_matching_document_text(tmp_path):
+    calls = []
+
+    def signature(texts):
+        calls.append(texts)
+        return {"default": SimpleNamespace(numpy=lambda: np.array([[len(text)] for text in texts]))}
+
+    ranker = ElmoRanker.__new__(ElmoRanker)
+    ranker._tf = SimpleNamespace(constant=lambda texts: texts)
+    ranker._signature = signature
+    ranker._model_id = "fixture"
+    ranker._document_vectors = {}
+    ranker.batch_size = 2
+    ranker.cache_dir = tmp_path
+
+    corpus = {"a": "a longer input", "b": "one", "c": "two words", "d": "another input"}
+    expected = np.array([[len(corpus[key])] for key in ("a", "b", "c")])
+    np.testing.assert_array_equal(ranker._encode_documents(["a", "b", "c"], corpus), expected)
+    assert calls == [["one", "two words"], ["a longer input"]]
+
+    corpus["b"] = "edited"
+    np.testing.assert_array_equal(
+        ranker._encode_documents(["d", "a", "b"], corpus),
+        np.array([[len(corpus[key])] for key in ("d", "a", "b")]),
+    )
+    assert calls[-1] == ["edited", "another input"]
+    np.testing.assert_array_equal(ranker._encode_documents(["c", "a"], corpus), expected[[2, 0]])
+    assert len(calls) == 3

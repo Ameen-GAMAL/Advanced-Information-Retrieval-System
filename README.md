@@ -74,7 +74,9 @@ Latency covers warm serial calls to the search engine. It excludes model downloa
 
 ## Original Vaswani weighted-fusion experiment
 
-The original BM25, MiniLM, ELMo, and corpus-trained Word2Vec ensemble remains available. It uses a different collection and evaluation split from SciFact. To rerun it, use a separate Python 3.12 environment with Java 17 and install the optional legacy dependencies:
+The original BM25, MiniLM, ELMo, and corpus-trained Word2Vec ensemble reached **0.2842 MAP** versus **0.2514** for BM25 on 47 held-out Vaswani queries, a **13.0% relative increase** in this rerun. See the [measured Vaswani report](benchmarks/vaswani/summary.json) for the exact split, weights, and component scores. The Word2Vec model uses multithreaded training, so repeat runs can vary slightly.
+
+To rerun the original experiment, use a separate Python 3.12 environment with Java 17 and install the optional legacy dependencies:
 
 ```bash
 python -m pip install -r requirements-legacy.txt
