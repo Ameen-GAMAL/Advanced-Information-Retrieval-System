@@ -18,6 +18,8 @@ from ir_system.fusion import fuse
 from ir_system.optimization import WeightOptimizer
 from ir_system.pipeline import RetrievalPipeline, load_config
 
+SCIFACT_WEIGHT_FLOOR = 1e-5
+
 
 def scifact_experiment(config: dict, cache_dir: Path, device: str):
     """Use the common SciFact BM25 candidates with the original reranker ensemble."""
@@ -34,18 +36,17 @@ def scifact_experiment(config: dict, cache_dir: Path, device: str):
     bert = BertReranker(model_name=models["bert"], revision=models.get("bert_revision"), device=device)
     gensim = GensimRanker(collection.documents, model_path=None, **models["word2vec"])
 
-    def component_runs(topics: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    def component_runs(topics: pd.DataFrame, weights: dict[str, float] | None = None) -> dict[str, pd.DataFrame]:
         query_map = dict(zip(topics.qid, topics["query"]))
         pool = pd.concat(
             [engine.search(query, profile="bm25").results.assign(qid=qid) for qid, query in query_map.items()],
             ignore_index=True,
         )
-        return {
-            "bm25": pool,
-            "bert": bert.score(pool, query_map, collection.documents),
-            "elmo": elmo.score(pool, query_map, collection.documents),
-            "gensim": gensim.score(pool, query_map, collection.documents),
-        }
+        runs = {"bm25": pool}
+        for name, ranker in (("bert", bert), ("elmo", elmo), ("gensim", gensim)):
+            if weights is None or weights[name] != 0.0:
+                runs[name] = ranker.score(pool, query_map, collection.documents)
+        return runs
 
     def topics(queries: dict[str, str]) -> pd.DataFrame:
         return pd.DataFrame(queries.items(), columns=["qid", "query"])
@@ -64,6 +65,8 @@ def main() -> None:
     parser.add_argument("--dataset", choices=("vaswani", "scifact"), default="vaswani")
     parser.add_argument("--cache-dir", type=Path, default=Path("data/cache"))
     parser.add_argument("--device", default="cpu", help="SciFact MiniLM inference device")
+    parser.add_argument("--all-components", action="store_true",
+                        help="Also score SciFact test components with zero frozen weight")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
@@ -87,8 +90,25 @@ def main() -> None:
     solution = WeightOptimizer(validation_runs, validation_qrels, baseline="bm25").optimize(
         **config["optimization"]
     )
-    test_runs = component_runs(test)
-    test_runs["fusion (tuned)"] = fuse(test_runs, solution.weights)
+    weights = solution.weights
+    validation_map = solution.validation_score
+    if args.dataset == "scifact":
+        # Softmax refinement can leave negligible positive weights. Only remove
+        # them when a validation-only check preserves the optimization score.
+        pruned = {name: value if value >= SCIFACT_WEIGHT_FLOOR else 0.0 for name, value in weights.items()}
+        total = sum(pruned.values())
+        pruned = {name: value / total for name, value in pruned.items()}
+        pruned_map = evaluate_run(fuse(validation_runs, pruned), validation_qrels)["MAP"]
+        if pruned_map >= validation_map - 1e-12:
+            weights, validation_map = pruned, pruned_map
+        logging.info("Frozen SciFact weights before held-out scoring: %s", weights)
+
+    if args.dataset == "scifact" and not args.all_components:
+        test_runs = component_runs(test, weights)
+    else:
+        test_runs = component_runs(test)
+    skipped = sorted(set(weights) - set(test_runs))
+    test_runs["fusion (tuned)"] = fuse(test_runs, weights)
     metrics = {profile: evaluate_run(run, test_qrels) for profile, run in test_runs.items()}
     baseline = metrics["bm25"]["MAP"]
     delta = metrics["fusion (tuned)"]["MAP"] - baseline
@@ -106,8 +126,11 @@ def main() -> None:
         "runtime": {"python": platform.python_version(), "os": platform.platform(),
                     "packages": {package: importlib.metadata.version(package) for package in packages}},
         "seconds": perf_counter() - started,
-        "weights": solution.weights,
-        "validation_map": solution.validation_score,
+        "weights": weights,
+        "optimizer_weights": solution.weights,
+        "weight_floor": SCIFACT_WEIGHT_FLOOR if args.dataset == "scifact" else None,
+        "skipped_zero_weight_test_components": skipped,
+        "validation_map": validation_map,
         "test_metrics": metrics,
         "test_map_delta": delta,
         "test_map_relative_change": delta / baseline if baseline else None,

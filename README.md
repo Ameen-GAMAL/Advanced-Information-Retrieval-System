@@ -25,8 +25,11 @@ The official BEIR SciFact test split contains 300 judged retrieval queries. We u
 | Hybrid (BM25 + dense via RRF) | 0.7228 | 0.9717 | 24.2 ms |
 | BM25 + MiniLM, depth 20 | 0.6822 | 0.9260 | 40.9 ms |
 | Hybrid + MiniLM, depth 20 | 0.6859 | 0.9717 | 56.8 ms |
+| Original weighted fusion, tuned on SciFact | 0.7140 | 0.9260 | — |
 
 Hybrid returned the highest held-out average nDCG@10, **+0.0389 absolute** over BM25 (paired bootstrap 95% interval **+0.0178 to +0.0610**). Dense retrieval won the development sweep and is the demo default. MiniLM reranking at the selected depth reduced the hybrid profile’s nDCG@10 on this collection. The [full run](benchmarks/scifact/summary.json) includes MAP@100, p50/p95, development sweeps, per-stage timings, exact split IDs, model revisions, and the recorded runtime. Its warm timings were measured on an RTX 3070 Laptop GPU with one query at a time. The live demo displays its own CPU timings.
+
+The [weighted-fusion comparator](benchmarks/scifact/legacy.json) used the same query splits and BM25 candidates. It reranks the full BM25 list, so its Recall@100 remains the same as BM25’s. It ran as a batch experiment and has no comparable per-query latency measurement.
 
 These results cover one English scientific collection. Relevance labels are incomplete. A retrieved abstract can be useful even if it has no judgment, and a highly ranked paper may support or refute a claim.
 
@@ -84,7 +87,7 @@ python -m pip install --no-deps -e .
 python scripts/legacy_benchmark.py
 ```
 
-The runner tunes its fusion weights on the Vaswani validation queries and writes held-out scores to `benchmarks/vaswani/summary.json`. To evaluate the same ensemble on SciFact using the same training sample and held-out split as the hybrid benchmark, run `python scripts/legacy_benchmark.py --dataset scifact`. ELMo downloads Google's versioned checkpoint from its Kaggle archive. The lightweight `scripts/demo_offline.py` is an explicitly synthetic optimization example.
+The runner tunes its fusion weights on the Vaswani validation queries and writes held-out scores to `benchmarks/vaswani/summary.json`. To evaluate the ensemble on the same SciFact training sample and held-out split as the hybrid benchmark, run `python scripts/legacy_benchmark.py --dataset scifact`. On SciFact, weights below `0.00001` may be set to zero before testing if that preserves validation MAP. The measured run set ELMo’s weight to zero. Pass `--all-components` to also calculate its standalone held-out score. ELMo downloads Google's versioned checkpoint from its Kaggle archive. The lightweight `scripts/demo_offline.py` is an explicitly synthetic optimization example.
 
 ## Tests and data sources
 
