@@ -1,212 +1,198 @@
-"""Streamlit demo: interactive search over BM25 + BERT/ELMo/Gensim fusion.
+"""Compare BM25, dense retrieval, and reranking over SciFact."""
 
-Lets a user type a free-text query, run it through the BM25 first stage,
-rerank the pool with the selected neural components, and see the tuned
-(or manually adjusted) late-fusion ranking — side by side with each
-individual component's ranking.
-
-Run locally:
-    streamlit run app.py
-
-Deploy: see the Dockerfile in the repo root (HF Spaces Docker SDK).
-"""
-
-from __future__ import annotations
-
-import json
-import re
-import sys
+from html import escape
 from pathlib import Path
+import sys
 
 import pandas as pd
 import streamlit as st
 
-# The package uses a src/ layout; `streamlit run app.py` doesn't inherit the
-# PYTHONPATH=src used by the CLI scripts, so put src/ on the path explicitly.
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT / "src"))
 
-from ir_system.fusion import fuse
-from ir_system.pipeline import RetrievalPipeline, load_config
-
-st.set_page_config(page_title="Advanced Information Retrieval System", layout="wide")
-
-CONFIG_PATH = "config/config.yaml"
-WEIGHTS_PATH = Path("artifacts/fusion_weights.json")
-RESULTS_PATH = Path("artifacts/results.json")
-
-# Terrier's query parser treats +-()[]{}^"~*?:\/ as operators; a free-text
-# UI query shouldn't accidentally trigger them, so strip to plain words.
-_UNSAFE_QUERY_CHARS = re.compile(r"[^\w\s]")
-
-
-def sanitize_query(text: str) -> str:
-    return _UNSAFE_QUERY_CHARS.sub(" ", text).strip()
-
-
-@st.cache_resource(show_spinner="Building BM25 index (first run only, ~1-2 min)...")
-def get_pipeline() -> RetrievalPipeline:
-    config = load_config(CONFIG_PATH)
-    return RetrievalPipeline(config)
-
-
-@st.cache_resource(show_spinner="Loading BERT cross-encoder...")
-def get_bert(_pipeline: RetrievalPipeline):
-    return _pipeline.bert
-
-
-@st.cache_resource(show_spinner="Loading ELMo module (large download, first run only)...")
-def get_elmo(_pipeline: RetrievalPipeline):
-    return _pipeline.elmo
-
-
-@st.cache_resource(show_spinner="Training/loading Gensim Word2Vec...")
-def get_gensim(_pipeline: RetrievalPipeline):
-    return _pipeline.gensim
-
-
-def load_tuned_weights() -> dict:
-    if WEIGHTS_PATH.exists():
-        return json.loads(WEIGHTS_PATH.read_text())["weights"]
-    return {"bm25": 0.25, "bert": 0.25, "elmo": 0.25, "gensim": 0.25}
-
-
-def load_offline_metrics() -> dict | None:
-    if RESULTS_PATH.exists():
-        return json.loads(RESULTS_PATH.read_text())
-    return None
-
-
-st.title("🔎 Advanced Information Retrieval System")
-st.caption(
-    "PyTerrier BM25 baseline reranked by BERT, ELMo and Gensim, "
-    "combined by a MAP-tuned weighted fusion."
+from ir_system.demo import (
+    PROFILE_LABELS,
+    QUERY_LIMIT,
+    BenchmarkReport,
+    Demo,
+    best_measured_profile,
+    build_demo,
+    load_benchmark,
+    make_snippet,
 )
 
-with st.expander("ℹ️ What is this?", expanded=True):
-    st.markdown(
-        """
-This is a **multi-stage search engine**. When you enter a query it:
+SYSTEM_NAME = "Scientific Abstract Search"
+COMPARE_COUNT = 10
 
-1. **Retrieves** an initial pool of candidate documents with **BM25**
-   (a classic keyword-ranking algorithm) — this is the *baseline*.
-2. **Reranks** that pool with neural models that understand meaning, not
-   just keywords — a **BERT** cross-encoder, **ELMo** embeddings, and a
-   **Gensim** Word2Vec model.
-3. **Fuses** their scores with weights tuned to maximise ranking quality
-   (**Mean Average Precision**), giving a **~15% improvement over BM25**.
 
-Use the sidebar to turn rerankers on/off and adjust the fusion weights,
-then watch how the ranking changes.
+@st.cache_resource(show_spinner="Preparing the search index and models…")
+def get_demo() -> Demo:
+    return build_demo(ROOT)
 
-**Search corpus:** the [Vaswani](https://ir-datasets.com/vaswani.html)
-collection — ~11,400 abstracts of scientific papers on **aerodynamics
-and aeronautics**. Queries about that domain work best, e.g.
-*"compressible flow past a body"* or *"boundary layer transition"*.
-"""
-    )
 
-with st.sidebar:
-    st.header("Rerankers")
-    use_bert = st.checkbox("BERT cross-encoder", value=True)
-    use_elmo = st.checkbox("ELMo embeddings", value=False, help="Heaviest component — large model download.")
-    use_gensim = st.checkbox("Gensim Word2Vec", value=True)
+def show_benchmark(benchmark: BenchmarkReport, profile: str, depth: int) -> None:
+    if benchmark.summary is None:
+        st.caption(benchmark.note)
+        return
 
-    st.header("Fusion weights")
-    tuned = load_tuned_weights()
-    st.caption("Defaults come from `artifacts/fusion_weights.json` (MAP-tuned).")
-    weights = {"bm25": st.slider("BM25", 0.0, 1.0, float(tuned.get("bm25", 0.25)), 0.05)}
-    if use_bert:
-        weights["bert"] = st.slider("BERT", 0.0, 1.0, float(tuned.get("bert", 0.25)), 0.05)
-    if use_elmo:
-        weights["elmo"] = st.slider("ELMo", 0.0, 1.0, float(tuned.get("elmo", 0.25)), 0.05)
-    if use_gensim:
-        weights["gensim"] = st.slider("Gensim", 0.0, 1.0, float(tuned.get("gensim", 0.25)), 0.05)
+    with st.expander("Held-out search benchmark"):
+        runtime = benchmark.summary.get("runtime", {})
+        benchmark_device = runtime.get("gpu") or runtime.get("cpu") or "recorded benchmark machine"
+        st.caption(
+            f"SciFact test results. Offline timing device: {benchmark_device}. "
+            "This live demo runs on CPU."
+        )
+        row = benchmark.for_profile(profile, depth)
+        baseline = benchmark.for_profile("bm25", depth)
+        if row and baseline:
+            ndcg = row["metrics"]["ndcg_at_10"]
+            delta = ndcg - baseline["metrics"]["ndcg_at_10"]
+            st.metric("Selected ranking nDCG@10", f"{ndcg:.3f}", delta=f"{delta:+.3f} vs BM25")
+        else:
+            st.caption(
+                "This configuration has no published test result. "
+                "The table shows the configurations that were measured."
+            )
 
-    top_k = st.number_input("Results to show", min_value=1, max_value=50, value=10)
+        result_rows = []
+        for profile_id, run in benchmark.summary["test"].items():
+            metrics, latency = run["metrics"], run["latency_ms"]
+            result_rows.append(
+                {
+                    "Configuration": profile_id,
+                    "Queries": run["n_queries"],
+                    "nDCG@10": round(metrics["ndcg_at_10"], 3),
+                    "Recall@100": round(metrics["recall_at_100"], 3),
+                    "MAP@100": round(metrics["map_at_100"], 3),
+                    "p50 (ms)": round(latency["p50"], 1),
+                    "p95 (ms)": round(latency["p95"], 1),
+                }
+            )
+        st.dataframe(pd.DataFrame(result_rows), hide_index=True, use_container_width=True)
 
-metrics = load_offline_metrics()
-if metrics:
-    with st.expander("Offline evaluation results (from `scripts/evaluate.py`)"):
-        rows = [{"system": name, **scores} for name, scores in metrics["test_metrics"].items()]
-        st.dataframe(pd.DataFrame(rows).set_index("system"), use_container_width=True)
-        st.metric("MAP improvement over BM25", f"{metrics['map_improvement']:+.1%}")
-else:
-    st.info(
-        "**Offline metrics not generated yet.** The live search below works "
-        "with default fusion weights. To reproduce the full experiment — build "
-        "the index, tune the fusion weights to maximise MAP, and measure the "
-        "improvement over BM25 — run the pipeline once:",
-        icon="ℹ️",
-    )
-    st.code(
-        "python scripts/build_index.py    # build the Terrier index\n"
-        "python scripts/tune_weights.py   # tune fusion weights on held-out queries\n"
-        "python scripts/evaluate.py       # evaluate tuned fusion vs BM25 baseline",
-        language="bash",
-    )
-    st.caption(
-        "This produces `artifacts/fusion_weights.json` (used as the default "
-        "slider values) and `artifacts/results.json` (the metrics table shown "
-        "here). Requires the full dependencies in `requirements.txt` and Java 11+."
-    )
 
-query = st.text_input("Search query", placeholder="e.g. compressible flow past a body")
-search = st.button("Search", type="primary")
+def show_results(
+    frame: pd.DataFrame,
+    demo: Demo,
+    sources: dict,
+    query: str,
+    baseline_positions: dict[str, int] | None = None,
+    judgments: dict[str, int] | None = None,
+) -> None:
+    if frame.empty:
+        st.info("No documents matched this query.")
+        return
 
-if search and query.strip():
-    clean_query = sanitize_query(query)
-    if not clean_query:
-        st.warning("Query has no searchable terms after sanitisation.")
-        st.stop()
-
-    pipeline = get_pipeline()
-    topics = pd.DataFrame([{"qid": "live", "query": clean_query}])
-
-    with st.spinner("Retrieving with BM25..."):
-        pool = pipeline.bm25.search(topics)
-
-    if pool.empty:
-        st.warning("No documents matched this query.")
-        st.stop()
-
-    queries = {"live": clean_query}
-    runs = {"bm25": pool}
-
-    if use_bert:
-        with st.spinner("Reranking with BERT..."):
-            runs["bert"] = get_bert(pipeline).score(pool, queries, pipeline.corpus)
-    if use_elmo:
-        with st.spinner("Reranking with ELMo..."):
-            runs["elmo"] = get_elmo(pipeline).score(pool, queries, pipeline.corpus)
-    if use_gensim:
-        with st.spinner("Reranking with Gensim..."):
-            runs["gensim"] = get_gensim(pipeline).score(pool, queries, pipeline.corpus)
-
-    active_weights = {name: weights[name] for name in runs}
-    total = sum(active_weights.values())
-    if total <= 0:
-        st.warning("At least one fusion weight must be greater than 0.")
-        st.stop()
-    active_weights = {name: w / total for name, w in active_weights.items()}
-
-    fused = fuse(runs, active_weights).head(int(top_k))
-
-    st.subheader(f"Fused results for: “{clean_query}”")
-    st.caption("Weights used: " + ", ".join(f"{k}={v:.2f}" for k, v in active_weights.items()))
-
-    for rank, row in enumerate(fused.itertuples(index=False), start=1):
-        text = pipeline.corpus.get(row.docno, "")
-        preview = text[:300] + ("..." if len(text) > 300 else "")
-        st.markdown(f"**{rank}. `{row.docno}`** — score {row.score:.4f}")
-        st.write(preview)
+    for position, row in enumerate(frame.itertuples(index=False), start=1):
+        doc_id = str(row.docno)
+        title = demo.titles.get(doc_id) or f"Document {doc_id}"
+        st.html(f"<strong>{position}. {escape(title)}</strong>")
+        keywords_rank, dense_rank = sources.get(doc_id, (None, None))
+        details = [f"Document {doc_id}"]
+        if keywords_rank is not None:
+            details.append(f"BM25 candidate #{keywords_rank}")
+        if dense_rank is not None:
+            details.append(f"Dense candidate #{dense_rank}")
+        if baseline_positions is not None:
+            baseline_rank = baseline_positions.get(doc_id)
+            if baseline_rank is None:
+                details.append(f"New to top {COMPARE_COUNT}")
+            elif baseline_rank != position:
+                change = baseline_rank - position
+                details.append(f"{'Up' if change > 0 else 'Down'} {abs(change)} vs BM25")
+        if judgments is not None and judgments.get(doc_id, 0) > 0:
+            details.append("Judged relevant")
+        st.caption(" · ".join(details))
+        snippet = make_snippet(demo.documents.get(doc_id, ""), title, query)
+        st.html(f"<p>{escape(snippet)}</p>")
         st.divider()
 
-    with st.expander("Per-component rankings"):
-        cols = st.columns(len(runs))
-        for col, (name, run) in zip(cols, runs.items()):
-            with col:
-                st.markdown(f"**{name}**")
-                top = run.sort_values("score", ascending=False).head(int(top_k))
-                st.dataframe(top[["docno", "score"]].reset_index(drop=True), use_container_width=True)
-elif search:
-    st.warning("Enter a query first.")
+
+def main() -> None:
+    st.set_page_config(page_title=SYSTEM_NAME, page_icon="🔎", layout="wide")
+    st.title(SYSTEM_NAME)
+    st.write("Search scientific abstracts and compare keyword matches with semantic retrieval and reranking.")
+
+    demo = get_demo()
+    st.caption(f"{demo.label} · {len(demo.documents):,} documents")
+    benchmark = load_benchmark(ROOT, demo)
+    default_profile, default_depth = best_measured_profile(benchmark)
+    options = tuple(PROFILE_LABELS)
+
+    example = st.selectbox(
+        "Try an example",
+        (None, *demo.examples),
+        format_func=lambda name: name or "Write your own query",
+    )
+    if st.session_state.get("active_example") != example:
+        st.session_state["active_example"] = example
+        st.session_state["query_input"] = demo.examples[example] if example else ""
+
+    with st.form("search"):
+        query = st.text_input(
+            "Search query",
+            key="query_input",
+            max_chars=QUERY_LIMIT,
+            placeholder="e.g. Sirtuins and ageing",
+        )
+        mode_column, depth_column = st.columns(2)
+        with mode_column:
+            profile = st.selectbox(
+                "Compare with BM25",
+                options,
+                index=options.index(default_profile),
+                format_func=PROFILE_LABELS.__getitem__,
+            )
+        with depth_column:
+            depths = (20, 50, 100)
+            depth = st.selectbox(
+                "MiniLM reranking depth",
+                depths,
+                index=depths.index(default_depth) if default_depth in depths else 1,
+                help="Used by configurations that include MiniLM.",
+            )
+        search = st.form_submit_button("Search", type="primary")
+
+    show_benchmark(benchmark, profile, depth)
+    if not search:
+        return
+    query = query.strip()
+    if not query:
+        st.warning("Enter a query or choose an example.")
+        return
+
+    with st.spinner("Finding and ranking results…"):
+        baseline = demo.engine.search(query, profile="bm25", top_k=COMPARE_COUNT)
+        comparison = demo.engine.search(query, profile=profile, rerank_depth=depth, top_k=COMPARE_COUNT)
+
+    baseline_positions = {
+        str(docno): rank for rank, docno in enumerate(baseline.results["docno"], start=1)
+    }
+    judged = demo.judgments.get(query)
+    if judged is not None:
+        st.caption(
+            "Results marked judged relevant have a positive relevance label for this query. "
+            "The example queries illustrate individual outcomes from the published comparison."
+        )
+
+    left, right = st.columns(2, gap="large")
+    with left:
+        st.subheader("BM25 baseline")
+        st.caption(f"Query time {baseline.stages_ms['total']:.1f} ms")
+        show_results(baseline.results, demo, baseline.sources, query, judgments=judged)
+    with right:
+        st.subheader(PROFILE_LABELS[profile])
+        st.caption(f"Query time {comparison.stages_ms['total']:.1f} ms")
+        show_results(comparison.results, demo, comparison.sources, query, baseline_positions, judged)
+
+    with st.expander("Live query timing by stage"):
+        rows = [
+            {"Configuration": name, "Stage": stage, "Milliseconds": round(elapsed, 1)}
+            for name, result in (("BM25 baseline", baseline), (PROFILE_LABELS[profile], comparison))
+            for stage, elapsed in result.stages_ms.items()
+        ]
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+
+if __name__ == "__main__":
+    main()

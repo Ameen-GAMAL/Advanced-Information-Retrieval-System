@@ -41,11 +41,12 @@ class BertReranker:
         batch_size: int = 64,
         max_length: int = 256,
         device: str | None = None,
+        revision: str | None = None,
     ) -> None:
         from sentence_transformers import CrossEncoder
 
         logger.info("loading cross-encoder %s", model_name)
-        self.model = CrossEncoder(model_name, max_length=max_length, device=device)
+        self.model = CrossEncoder(model_name, max_length=max_length, device=device, revision=revision)
         self.batch_size = batch_size
 
     def score(
@@ -71,7 +72,7 @@ class BertReranker:
         ]
         logger.info("scoring %d query-document pairs", len(pairs))
         scores = self.model.predict(
-            pairs, batch_size=self.batch_size, show_progress_bar=True
+            pairs, batch_size=self.batch_size, show_progress_bar=False
         )
         out = run[["qid", "docno"]].copy()
         out["score"] = scores

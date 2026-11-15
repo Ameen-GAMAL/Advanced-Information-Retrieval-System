@@ -1,0 +1,33 @@
+{
+  "documents": [
+    {
+      "id": "fusion",
+      "title": "Reciprocal rank fusion",
+      "text": "Reciprocal rank fusion combines ranked lists by assigning higher scores to documents that appear near the top."
+    },
+    {
+      "id": "keyword",
+      "title": "Keyword ranking",
+      "text": "BM25 ranks documents using term frequency, inverse document frequency, and document lengths."
+    },
+    {
+      "id": "vectors",
+      "title": "Dense vector search",
+      "text": "Vector retrieval uses a query embedding to find documents with similar meaning."
+    },
+    {
+      "id": "glacier",
+      "title": "Glacial movement",
+      "text": "Glaciers deform slowly and can slide over bedrock."
+    }
+  ],
+  "examples": {
+    "Known relevant result": "reciprocal rank fusion",
+    "Semantic retrieval": "search for documents with similar meaning"
+  },
+  "judgments": {
+    "reciprocal rank fusion": {
+      "fusion": 1
+    }
+  }
+}

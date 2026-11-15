@@ -23,7 +23,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-ELMO_HUB_URL = "https://tfhub.dev/google/elmo/3"
+ELMO_HUB_URL = "https://www.kaggle.com/models/google/elmo/tensorFlow1/elmo/3"
 
 
 class ElmoRanker:
@@ -39,6 +39,7 @@ class ElmoRanker:
         import tensorflow_hub as hub
 
         self._tf = tf
+        self._model_id = hub_url
         logger.info("loading ELMo module from %s", hub_url)
         self._elmo = hub.load(hub_url)
         self._signature = self._elmo.signatures["default"]
@@ -63,12 +64,16 @@ class ElmoRanker:
         """Encode documents, memoised on disk keyed by the docno set."""
         if self.cache_dir is None:
             return self.encode([corpus[d] for d in docnos])
-        key = hashlib.sha1("\n".join(sorted(docnos)).encode()).hexdigest()[:16]
+        digest = hashlib.sha256(self._model_id.encode("utf-8"))
+        for docno in sorted(docnos):
+            text = corpus[docno] or ""
+            digest.update(f"{len(docno)}:{docno}{len(text)}:{text}".encode("utf-8"))
+        key = digest.hexdigest()[:24]
         cache_file = self.cache_dir / f"docs_{key}.npz"
         if cache_file.exists():
-            cached = np.load(cache_file, allow_pickle=True)
-            stored = {d: i for i, d in enumerate(cached["docnos"].tolist())}
-            return cached["embeddings"][[stored[d] for d in docnos]]
+            with np.load(cache_file, allow_pickle=False) as cached:
+                stored = {d: i for i, d in enumerate(cached["docnos"].tolist())}
+                return cached["embeddings"][[stored[d] for d in docnos]]
         embeddings = self.encode([corpus[d] for d in docnos])
         np.savez_compressed(cache_file, docnos=np.array(list(docnos)), embeddings=embeddings)
         return embeddings

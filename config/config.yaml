@@ -14,7 +14,8 @@ retrieval:
 
 models:
   bert: "cross-encoder/ms-marco-MiniLM-L-6-v2"
-  elmo: "https://tfhub.dev/google/elmo/3"
+  bert_revision: "233902d25c440f23af6f7d6e94d2946bac0bee0a"
+  elmo: "https://www.kaggle.com/models/google/elmo/tensorFlow1/elmo/3"
   word2vec:
     vector_size: 300
     window: 5

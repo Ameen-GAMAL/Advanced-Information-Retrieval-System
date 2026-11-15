@@ -1,23 +1,18 @@
-# Core scientific stack
-numpy>=1.24,<2.0
-pandas>=2.0
-scipy>=1.10
-pyyaml>=6.0
-
-# Interactive demo (app.py)
-streamlit>=1.28
-
-# First-stage retrieval
-python-terrier>=0.10.0
-ir_datasets>=0.5.5
-
-# BERT cross-encoder reranking
-sentence-transformers>=2.2.0
-torch>=2.0
-
-# ELMo contextual embeddings
-tensorflow>=2.11
-tensorflow-hub>=0.13
-
-# Gensim Word2Vec
-gensim>=4.3
+# Reproducible top-level dependencies for CPU search on Python 3.12.
+# The two inference models and the SciFact archive have separate content pins.
+--extra-index-url https://download.pytorch.org/whl/cpu
+numpy==1.26.2
+pandas==2.1.3
+scipy==1.16.3
+PyYAML==6.0.1
+streamlit==1.41.1
+python-terrier==0.13.0
+ir-datasets==0.5.9
+pyjnius==1.6.1
+torch==2.5.1+cpu; platform_machine == "x86_64" and sys_platform == "linux" or platform_machine == "AMD64" and sys_platform == "win32"
+torch==2.5.1; platform_machine != "x86_64" and platform_machine != "AMD64" or sys_platform == "darwin"
+sentence-transformers==3.4.1
+transformers==4.48.3
+huggingface-hub==0.28.1
+safetensors==0.4.3
+tokenizers==0.21.4

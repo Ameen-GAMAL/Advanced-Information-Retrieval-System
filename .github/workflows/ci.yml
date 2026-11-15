@@ -1,0 +1,40 @@
+name: Search checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --build-arg IR_DEMO_CORPUS=fixture -t ir-demo:ci .
+      - name: Search with the embedded models and indexes
+        run: docker run --rm --network none ir-demo:ci python scripts/prepare_demo.py
+      - name: Start the demo
+        run: |
+          docker run --detach --name ir-demo -p 127.0.0.1:7860:7860 ir-demo:ci
+          curl --fail --silent --show-error --retry 10 --retry-all-errors --retry-delay 3 \
+            http://127.0.0.1:7860/_stcore/health
+      - name: Open the demo and run a fixture query
+        run: docker exec ir-demo python scripts/smoke_demo_ui.py
+      - name: Show container logs
+        if: failure()
+        run: docker logs ir-demo

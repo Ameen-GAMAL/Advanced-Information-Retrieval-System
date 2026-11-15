@@ -62,7 +62,8 @@ class RetrievalPipeline:
         if self._bert is None:
             from .rankers.bert_reranker import BertReranker
 
-            self._bert = BertReranker(model_name=self.config["models"]["bert"])
+            models = self.config["models"]
+            self._bert = BertReranker(model_name=models["bert"], revision=models.get("bert_revision"))
         return self._bert
 
     @property

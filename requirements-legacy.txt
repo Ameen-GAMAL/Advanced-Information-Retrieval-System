@@ -1,0 +1,18 @@
+# Optional dependencies for reproducing the original Vaswani experiment.
+# Keep these out of the CPU demo and install them in a separate environment.
+--extra-index-url https://download.pytorch.org/whl/cpu
+numpy==1.26.2
+pandas==2.1.3
+scipy==1.12.0
+PyYAML==6.0.1
+python-terrier==0.13.0
+pyjnius==1.6.1
+ir-datasets==0.5.9
+sentence-transformers==3.4.1
+transformers==4.48.3
+huggingface-hub==0.28.1
+torch==2.5.1+cpu
+tensorflow==2.17.0
+tensorflow-hub==0.16.1
+tf-keras==2.17.0
+gensim==4.3.3

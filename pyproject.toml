@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "advanced-ir-system"
 version = "1.0.0"
-description = "Multi-stage search engine: PyTerrier BM25 with BERT, ELMo and Gensim rerankers fused via MAP-optimised weights."
+description = "Scientific abstract search with BM25, dense retrieval, reciprocal rank fusion, and MiniLM reranking."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Ameen Gamal" }]
-keywords = ["information-retrieval", "search-engine", "pyterrier", "bert", "elmo", "gensim", "learning-to-rank"]
+keywords = ["information-retrieval", "search-engine", "pyterrier", "hybrid-search", "reranking"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",

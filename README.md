@@ -1,189 +1,96 @@
-# Advanced Information Retrieval System
+---
+title: Scientific Abstract Search
+emoji: 🔎
+colorFrom: indigo
+colorTo: blue
+sdk: docker
+app_port: 7860
+pinned: false
+---
 
-A multi-stage neural search engine that combines a **PyTerrier BM25**
-first-stage retriever with **BERT**, **ELMo**, and **Gensim (Word2Vec)**
-rerankers, fused through a late-fusion layer whose weights are tuned to
-**maximise Mean Average Precision (MAP)** on a held-out query set.
+# Scientific Abstract Search
 
-By framing ranking as an optimisation problem — *find the fusion weights
-that maximise validation MAP* — the tuned ensemble achieves a **~15% MAP
-improvement over the BM25 baseline**.
+Compare keyword and semantic retrieval over 5,183 scientific abstracts. The Streamlit demo shows results side by side with source ranks, relevance judgments for example queries, and per-stage timings. The demo and benchmark call the same search engine.
 
-```
-                                       ┌────────────────────────┐
-                                       │   BERT cross-encoder    │──┐
-   query ──► BM25 (PyTerrier) ──►      ├────────────────────────┤  │   weighted
-             top-100 candidate pool    │   ELMo cosine (TF-Hub) │──┼──► late ──► ranking
-                                       ├────────────────────────┤  │   fusion
-                                       │   Gensim Word2Vec cos.  │──┘   (MAP-tuned w)
-                                       └────────────────────────┘
-                                  weights w* = argmax_w MAP(fuse(runs, w), qrels_val)
-```
+[Benchmark summary](benchmarks/scifact/summary.json) · [Per-query scores](benchmarks/scifact/test_query_scores.csv) · [Ranked runs](benchmarks/scifact/test_rankings.csv.gz) · [CI](https://github.com/Ameen-GAMAL/Advanced-Information-Retrieval-System/actions/workflows/ci.yml)
 
-## Why this design
+## Held-out results
 
-| Stage | Component | Role |
-|-------|-----------|------|
-| Retrieve | **BM25** (Terrier) | Fast lexical recall — builds the candidate pool and serves as the **baseline**. |
-| Rerank | **BERT** cross-encoder | Joint query–document attention; strongest single signal. |
-| Rerank | **ELMo** contextual embeddings | Context-sensitive semantic match via deep BiLM representations. |
-| Rerank | **Gensim Word2Vec** | Corpus-trained embeddings; semantic match + optional query expansion. |
-| Combine | **Weighted late fusion** | Per-query min-max normalisation, then a weighted score sum. |
-| Optimise | **Weight tuner** | Grid search + Nelder-Mead on the simplex, maximising held-out MAP. |
+The official BEIR SciFact test split contains 300 judged retrieval queries. We used a fixed 50-query sample of the official training split to select the default profile and MiniLM depths of 20, 50, or 100 before running the test. All configurations returned up to 100 documents per query.
 
-Each ranker emits a PyTerrier-style run (`qid, docno, score`), so they
-are fully interchangeable inputs to the fusion layer.
+| Search profile | nDCG@10 | Recall@100 | Warm p95 |
+| --- | ---: | ---: | ---: |
+| BM25 | 0.6839 | 0.9260 | 9.9 ms |
+| Dense | 0.7127 | 0.9417 | 17.4 ms |
+| Hybrid (BM25 + dense via RRF) | 0.7228 | 0.9717 | 24.2 ms |
+| BM25 + MiniLM, depth 20 | 0.6822 | 0.9260 | 40.9 ms |
+| Hybrid + MiniLM, depth 20 | 0.6859 | 0.9717 | 56.8 ms |
 
-## Ranking as an optimisation problem
+Hybrid returned the highest held-out average nDCG@10, **+0.0389 absolute** over BM25 (paired bootstrap 95% interval **+0.0178 to +0.0610**). Dense retrieval won the development sweep and is the demo default. MiniLM reranking at the selected depth reduced the hybrid profile’s nDCG@10 on this collection. The [full run](benchmarks/scifact/summary.json) includes MAP@100, p50/p95, development sweeps, per-stage timings, exact split IDs, model revisions, and the recorded runtime. Its warm timings were measured on an RTX 3070 Laptop GPU with one query at a time. The live demo displays its own CPU timings.
 
-The fusion weights `w = (w_bm25, w_bert, w_elmo, w_gensim)` are the free
-parameters. We search the probability simplex (`w_r ≥ 0`, `Σ w_r = 1`)
-for the weights that maximise MAP on a **validation** query set:
+These results cover one English scientific collection. Relevance labels are incomplete. A retrieved abstract can be useful even if it has no judgment, and a highly ranked paper may support or refute a claim.
 
-```
-w* = argmax_w  MAP( fuse(runs, w), qrels_val )
-```
+## How search works
 
-MAP is piecewise-constant and non-differentiable in `w` (it only changes
-when two documents swap positions), so the optimiser
-([`ir_system/optimization.py`](src/ir_system/optimization.py)) uses:
+1. **Retrieve.** PyTerrier BM25 and exact cosine search over precomputed BGE-small embeddings each return up to 100 candidates. Either retriever can discover documents independently.
+2. **Fuse.** Reciprocal Rank Fusion combines the two lists by rank. The demo records each result’s keyword and dense ranks.
+3. **Rerank.** The optional MiniLM cross-encoder rescores a bounded shortlist. Remaining documents retain their first-stage order.
 
-1. a **coarse grid search** over the simplex to find a good basin, then
-2. **Nelder-Mead** refinement in an unconstrained space, re-parameterising
-   `w = softmax(θ)` so every candidate stays on the simplex automatically.
+The dataset archive has a checked SHA-256. Indexes and document embeddings are cached by corpus content, and models load at pinned Hugging Face revisions. Search variants and their settings are in [SearchEngine](src/ir_system/search.py).
 
-The tuned weights are then evaluated on a **disjoint test query set** —
-the queries the weights were never fitted to — so the reported gain is
-not an artefact of overfitting the objective.
+## Run the demo
 
-## Project layout
-
-```
-src/ir_system/
-  data.py              dataset loading + validation/test query split
-  indexing.py          Terrier index construction
-  fusion.py            per-query normalisation + weighted fusion
-  evaluation.py        MAP, nDCG@k, P@k (from first principles)
-  optimization.py      MAP-maximising fusion-weight tuner
-  pipeline.py          index → BM25 pool → rerankers orchestration
-  rankers/
-    bm25.py            PyTerrier BM25 baseline
-    bert_reranker.py   BERT cross-encoder (sentence-transformers)
-    elmo_ranker.py     ELMo embeddings (TensorFlow Hub)
-    gensim_ranker.py   Word2Vec ranker + query expansion
-scripts/
-  build_index.py       build the Terrier index
-  tune_weights.py      optimise fusion weights on the validation split
-  evaluate.py          evaluate tuned fusion vs baseline on the test split
-  demo_offline.py      dependency-light synthetic demo of the optimiser
-tests/                 unit tests for fusion, evaluation, optimisation
-config/config.yaml     experiment configuration
-```
-
-## Quick start (no heavy dependencies)
-
-The fusion, evaluation and optimisation core runs on just
-numpy/pandas/scipy. This is the fastest way to see the optimiser recover
-good fusion weights and beat the baseline:
+With Python 3.12 and Java 17 installed:
 
 ```bash
-pip install -r requirements-dev.txt
-PYTHONPATH=src python scripts/demo_offline.py
-PYTHONPATH=src pytest -q
+python -m pip install -r requirements.txt
+python -m pip install --no-deps -e .
+python scripts/prepare_demo.py
+python -m streamlit run app.py
 ```
 
-`demo_offline.py` runs the full *tune-on-validation → evaluate-on-test*
-loop on synthetic component runs (BERT modelled as the least noisy
-ranker, BM25 the most), so it needs no PyTerrier/torch/tensorflow and no
-downloads.
+The preparation step downloads the verified dataset and checkpoints and prebuilds both indexes. Subsequent runs reuse the cache. Try a preset query and switch profiles to inspect what changed.
 
-## Full pipeline (real collection)
-
-Reproduce the neural experiment on the [Vaswani](https://ir-datasets.com/vaswani.html)
-collection (11,429 abstracts, 93 queries). Requires Java 11+ for Terrier.
+The Docker image prepares the same assets at build time and serves the demo on port 7860:
 
 ```bash
-pip install -r requirements.txt
-
-# 1. Build the Terrier index
-PYTHONPATH=src python scripts/build_index.py
-
-# 2. Tune fusion weights to maximise MAP on the validation queries
-PYTHONPATH=src python scripts/tune_weights.py
-#    -> artifacts/fusion_weights.json
-
-# 3. Evaluate the tuned fusion vs BM25 on the held-out test queries
-PYTHONPATH=src python scripts/evaluate.py
-#    -> artifacts/results.json
+docker build -t scientific-abstract-search .
+docker run --rm -p 7860:7860 scientific-abstract-search
 ```
 
-`evaluate.py` prints a metric table and the final MAP improvement over
-the BM25 baseline:
+This repository can also be deployed as a [Hugging Face Docker Space](https://huggingface.co/docs/hub/spaces-sdks-docker). On a push or pull request, CI runs the unit tests and exercises the Docker image and UI against a small synthetic collection.
 
-```
-system              MAP   nDCG@10      P@10
-------------------------------------------------
-bm25             0.xxxx    0.xxxx    0.xxxx
-bert             0.xxxx    0.xxxx    0.xxxx
-elmo             0.xxxx    0.xxxx    0.xxxx
-gensim           0.xxxx    0.xxxx    0.xxxx
-fusion (tuned)   0.xxxx    0.xxxx    0.xxxx
+## Reproduce the SciFact benchmark
 
-MAP improvement of tuned fusion over BM25 baseline: +~15%
-```
-
-## Interactive demo (Streamlit)
-
-`app.py` provides a search box over the same BM25 → BERT/ELMo/Gensim →
-fusion pipeline: toggle rerankers, adjust fusion weights, and see the
-resulting ranking (plus each component's individual ranking) live.
+After installing the app dependencies and package, run:
 
 ```bash
-pip install -r requirements.txt
-streamlit run app.py
+python scripts/benchmark.py --output-dir benchmarks/scifact
 ```
 
-Requires Java 11+ (Terrier). The BM25 index and neural models are built
-once and cached for the session (`st.cache_resource`).
+The default is CPU. Pass `--device cuda:0` with a compatible CUDA build of PyTorch to reproduce the GPU inference setup. Exact vector matching remains on CPU. Run `python scripts/benchmark.py --help` for the depth sweep and optional development p95 budget. `--smoke` runs two queries per split and writes to a separate cache directory.
 
-### Deploy (Docker / Hugging Face Spaces)
+Latency covers warm serial calls to the search engine. It excludes model downloads, index construction, the browser, and network round trips. Compare timing values on the same machine and runtime.
 
-PyTerrier needs a JVM, so this ships as a **Docker** Space rather than
-the lightweight Streamlit SDK:
+## Original Vaswani weighted-fusion experiment
+
+The original BM25, MiniLM, ELMo, and corpus-trained Word2Vec ensemble remains available. It uses a different collection and evaluation split from SciFact. To rerun it, use a separate Python 3.12 environment with Java 17 and install the optional legacy dependencies:
 
 ```bash
-docker build -t ir-system .
-docker run -p 7860:7860 ir-system
+python -m pip install -r requirements-legacy.txt
+python -m pip install --no-deps -e .
+python scripts/legacy_benchmark.py
 ```
 
-To deploy on Hugging Face Spaces: create a new Space with **Docker** as
-the SDK, push this repo to it (the `Dockerfile` at the root is picked up
-automatically), and it will serve on port 7860.
+The runner tunes its fusion weights on the Vaswani validation queries and writes held-out scores to `benchmarks/vaswani/summary.json`. To evaluate the same ensemble on SciFact using the same training sample and held-out split as the hybrid benchmark, run `python scripts/legacy_benchmark.py --dataset scifact`. ELMo downloads Google's versioned checkpoint from its Kaggle archive. The lightweight `scripts/demo_offline.py` is an explicitly synthetic optimization example.
 
-## Configuration
-
-All knobs live in [`config/config.yaml`](config/config.yaml): dataset id,
-BM25 `k1`/`b` and pool size, per-model checkpoints, the validation/test
-split fraction and seed, and the optimiser's grid resolution and
-iteration budget.
-
-## Testing
+## Tests and data sources
 
 ```bash
-PYTHONPATH=src pytest -q
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
 ```
 
-The suite covers the metric implementations (against textbook AP/nDCG
-examples), the fusion/normalisation logic, and the optimiser (verifying
-it stays on the simplex and shifts weight toward stronger rankers).
-
-## Requirements
-
-- Python 3.9+
-- Java 11+ (Terrier, for the full pipeline)
-- See [`requirements.txt`](requirements.txt) (full) and
-  [`requirements-dev.txt`](requirements-dev.txt) (core + tests).
-
-## License
-
-Released under the [MIT License](LICENSE).
+- [BEIR](https://github.com/beir-cellar/beir) provides the SciFact benchmark packaging. [Allen Institute for AI SciFact](https://github.com/allenai/scifact) provides the claims and judgments (CC BY 4.0) and the S2ORC-derived abstracts (ODC-By 1.0). See [SciFact’s data license](https://github.com/allenai/scifact/blob/master/LICENSE.md).
+- [Vaswani via ir_datasets](https://ir-datasets.com/vaswani.html) supplies the historical benchmark.
+- [BGE-small](https://huggingface.co/BAAI/bge-small-en-v1.5), [MiniLM](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2), and [Reciprocal Rank Fusion](https://cormack.uwaterloo.ca/cormack/cormacksigir09-rrf.pdf) are used by the current pipeline.
